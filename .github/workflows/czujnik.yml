@@ -24,6 +24,7 @@ jobs:
       ADRES: https://inoreader.fg.pl/radar/health
       PANEL: https://redaktor.fg.pl
       GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
     steps:
       - name: Zapytaj radar (trzy podejścia, żeby chwilowa sieć nie budziła redakcji)
@@ -32,16 +33,16 @@ jobs:
           zyje=0; signal=nieznany; model=nieznany; kod=000; tresc=""
           for proba in 1 2 3; do
             kod=$(curl -s -o odp.json -w '%{http_code}' --max-time 20 "$ADRES" || echo 000)
-            # 503 to „Signal odłączony", ale sam radar odpowiada: to nie jest awaria serwera
+            # 503 znaczy „Signal odłączony", ale sam radar odpowiada: to nie awaria serwera
             if [ "$kod" = "200" ] || [ "$kod" = "503" ]; then
               if grep -q '"wersja"' odp.json; then zyje=1; break; fi
             fi
-            [ "$proba" -lt 3 ] && sleep 20
+            if [ "$proba" -lt 3 ]; then sleep 20; fi
           done
           if [ "$zyje" = "1" ]; then
-            tresc=$(head -c 400 odp.json | tr -d '\n')
-            grep -q '"signal":true' odp.json && signal=ok || signal=padl
-            grep -q '"dify":true' odp.json && model=ok || model=padl
+            tresc=$(head -c 300 odp.json | tr -d '\n')
+            if grep -q '"signal":true' odp.json; then signal=ok; else signal=padl; fi
+            if grep -q '"dify":true' odp.json; then model=ok; else model=padl; fi
           fi
           {
             echo "zyje=$zyje"
@@ -53,64 +54,59 @@ jobs:
           echo "radar=$zyje kod=$kod signal=$signal model=$model"
 
       - name: Alarm albo odwołanie alarmu
+        env:
+          ZYJE: ${{ steps.pytanie.outputs.zyje }}
+          KOD: ${{ steps.pytanie.outputs.kod }}
+          SIGNAL: ${{ steps.pytanie.outputs.signal }}
+          TRESC: ${{ steps.pytanie.outputs.tresc }}
         run: |
-          zyje="${{ steps.pytanie.outputs.zyje }}"
-          kod="${{ steps.pytanie.outputs.kod }}"
-          signal="${{ steps.pytanie.outputs.signal }}"
-          tresc="${{ steps.pytanie.outputs.tresc }}"
           teraz=$(TZ=Europe/Warsaw date '+%d.%m.%Y %H:%M')
-          repo="${{ github.repository }}"
-
-          push () {  # $1 tytuł, $2 treść, $3 priorytet, $4 tagi
-            [ -z "$NTFY_TOPIC" ] && return 0
-            curl -s --max-time 15 \
-              -H "Title: $1" -H "Priority: $3" -H "Tags: $4" \
-              -H "Click: $PANEL" \
+          push () {  # $1 tytuł, $2 treść, $3 priorytet, $4 tag
+            if [ -z "$NTFY_TOPIC" ]; then return 0; fi
+            curl -s --max-time 15 -H "Title: $1" -H "Priority: $3" -H "Tags: $4" -H "Click: $PANEL" \
               -d "$2" "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true
           }
-          otwarte () { gh issue list --repo "$repo" --label "$1" --state open --limit 1 --json number -q '.[0].number'; }
+          otwarte () { gh issue list --repo "$REPO" --label "$1" --state open --limit 1 --json number -q '.[0].number'; }
 
-          # 1. czy radar w ogóle odpowiada
           nr=$(otwarte radar-down)
-          if [ "$zyje" = "0" ] && [ -z "$nr" ]; then
-            gh issue create --repo "$repo" --label radar-down \
-              --title "🚨 Radar nie odpowiada ($teraz)" \
-              --body "@Asystent-AI Radar Głosu Czemiernik nie odpowiada na \`$ADRES\` (trzy podejścia, ostatni kod HTTP: \`$kod\`).
-
-Znaczy to, że nie działa też wszystko, co biegnie przez tamten serwer: alerty pilne na Signal, digesty, ranking tematów, panel i kanał RSS alarmów.
-
-Co sprawdzić:
-1. \`ssh root@204.168.196.86\` i \`docker ps | grep glos-radar\`
-2. \`cd /opt/glos-radar && docker compose up -d glos-radar\`
-3. \`docker logs --tail 100 glos-radar\`
-
-Ten wpis zamknie się sam, gdy radar znów zacznie odpowiadać."
-            push "RADAR NIE ODPOWIADA" "Serwer radaru milczy od $teraz. Alerty, digesty i panel nie działają." urgent "rotating_light"
-          elif [ "$zyje" = "1" ] && [ -n "$nr" ]; then
-            gh issue comment "$nr" --repo "$repo" --body "✅ Radar znów odpowiada ($teraz). Odpowiedź: \`$tresc\`"
-            gh issue close "$nr" --repo "$repo"
-            push "Radar znów odpowiada" "Serwer wrócił $teraz." default "white_check_mark"
+          if [ "$ZYJE" = "0" ] && [ -z "$nr" ]; then
+            body=$(printf '%s\n' \
+              "@Asystent-AI Radar Głosu Czemiernik nie odpowiada na $ADRES (trzy podejścia, ostatni kod HTTP: $KOD)." \
+              "" \
+              "Nie działa więc także wszystko, co biegnie przez tamten serwer: alerty pilne na Signal, digesty, ranking tematów, panel i kanał RSS alarmów." \
+              "" \
+              "Co sprawdzić po kolei:" \
+              "1. ssh root@204.168.196.86 oraz docker ps | grep glos-radar" \
+              "2. cd /opt/glos-radar && docker compose up -d glos-radar" \
+              "3. docker logs --tail 100 glos-radar" \
+              "" \
+              "Ten wpis zamknie się sam, gdy radar znów zacznie odpowiadać.")
+            gh issue create --repo "$REPO" --label radar-down --title "🚨 Radar nie odpowiada ($teraz)" --body "$body"
+            push "RADAR NIE ODPOWIADA" "Serwer radaru milczy ($teraz). Alerty, digesty i panel nie działają." urgent rotating_light
+          elif [ "$ZYJE" = "1" ] && [ -n "$nr" ]; then
+            gh issue comment "$nr" --repo "$REPO" --body "✅ Radar znów odpowiada ($teraz). Odpowiedź: $TRESC"
+            gh issue close "$nr" --repo "$REPO"
+            push "Radar znów odpowiada" "Serwer wrócił ($teraz)." default white_check_mark
           fi
 
-          # 2. Signal: radar żyje, ale nie ma jak wysłać wiadomości
           nrs=$(otwarte signal-down)
-          if [ "$zyje" = "1" ] && [ "$signal" = "padl" ] && [ -z "$nrs" ]; then
-            gh issue create --repo "$repo" --label signal-down \
-              --title "⚠️ Signal radaru odłączony ($teraz)" \
-              --body "@Asystent-AI Radar działa, ale zgłasza \`signal: false\`, czyli nie ma jak wysłać alertów ani digestu.
-
-Podłączenie: panel $PANEL → Ustawienia → Signal → kod QR (telefon: Signal → Ustawienia → Urządzenia połączone)."
-            push "Signal radaru odłączony" "Radar działa, ale nie ma jak wysłać wiadomości. Zeskanuj kod QR w panelu." high "warning"
-          elif [ "$zyje" = "1" ] && [ "$signal" = "ok" ] && [ -n "$nrs" ]; then
-            gh issue comment "$nrs" --repo "$repo" --body "✅ Signal znów podłączony ($teraz)."
-            gh issue close "$nrs" --repo "$repo"
-            push "Signal znów podłączony" "Radar znów wysyła wiadomości." default "white_check_mark"
+          if [ "$ZYJE" = "1" ] && [ "$SIGNAL" = "padl" ] && [ -z "$nrs" ]; then
+            body=$(printf '%s\n' \
+              "@Asystent-AI Radar działa, ale zgłasza signal: false, czyli nie ma jak wysłać alertów ani digestu." \
+              "" \
+              "Podłączenie: panel $PANEL → Ustawienia → Signal → kod QR (w telefonie: Signal → Ustawienia → Urządzenia połączone).")
+            gh issue create --repo "$REPO" --label signal-down --title "⚠️ Signal radaru odłączony ($teraz)" --body "$body"
+            push "Signal radaru odłączony" "Radar działa, ale nie ma jak wysłać wiadomości. Zeskanuj kod QR w panelu." high warning
+          elif [ "$ZYJE" = "1" ] && [ "$SIGNAL" = "ok" ] && [ -n "$nrs" ]; then
+            gh issue comment "$nrs" --repo "$REPO" --body "✅ Signal znów podłączony ($teraz)."
+            gh issue close "$nrs" --repo "$REPO"
+            push "Signal znów podłączony" "Radar znów wysyła wiadomości." default white_check_mark
           fi
 
       - name: Zgłoś niepowodzenie samego czujnika
         if: failure()
         run: |
-          [ -z "$NTFY_TOPIC" ] && exit 0
+          if [ -z "$NTFY_TOPIC" ]; then exit 0; fi
           curl -s --max-time 15 -H "Title: Czujnik radaru się wywrócił" -H "Priority: high" -H "Tags: warning" \
             -d "Zadanie GitHuba nie doszło do końca: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true
