@@ -6,7 +6,9 @@ name: Czujnik radaru
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # nie o pelnych dziesiatkach: GitHub opoznia harmonogramy w szczycie,
+    # a szczyt to poczatek kazdej godziny
+    - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch:
 
 permissions:
