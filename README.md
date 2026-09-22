@@ -44,7 +44,9 @@ uruchomienie z harmonogramu (`schedule`) dotąd nie ruszyło**, mimo że:
   (wcześniejsze szły jako `web-flow`),
 - GitHub Status nie zgłaszał incydentu.
 
-Dopóki to się nie zmieni, jedyną działającą warstwą jest dozór na serwerze
-(`/opt/glos-radar/doglad.sh`), który obsługuje wszystko poza padnięciem całej
-maszyny. Domknięcie tej ostatniej luki wymaga zewnętrznej usługi monitorującej
-(np. darmowy UptimeRobot na `https://inoreader.fg.pl/radar/health`).
+Dopóki to się nie zmieni, pracę wykonuje dozór na serwerze
+(`/opt/glos-radar/doglad.sh`), łącznie z padnięciem całej maszyny: przy każdym
+przebiegu planuje w ntfy alarm z opóźnieniem 25 minut i kasuje poprzedni, więc
+gdy nie ma kto kasować, alarm sam dochodzi na telefon (martwy człowiek).
+Zewnętrzna usługa monitorująca nie jest do tego potrzebna. To repozytorium
+zostaje jako rezerwa i jako druga para oczu, gdyby harmonogram kiedyś ruszył.
