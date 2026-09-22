@@ -8,7 +8,7 @@ on:
   schedule:
     # nie o pelnych dziesiatkach: GitHub opoznia harmonogramy w szczycie,
     # a szczyt to poczatek kazdej godziny
-    - cron: "3,13,23,33,43,53 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
