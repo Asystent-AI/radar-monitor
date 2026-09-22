@@ -30,9 +30,10 @@ jobs:
       - name: Zapytaj radar (trzy podejścia, żeby chwilowa sieć nie budziła redakcji)
         id: pytanie
         run: |
-          zyje=0; signal=nieznany; model=nieznany; kod=000; tresc=""
+          zyje=0; signal=nieznany; model=nieznany; kod=000; tresc=""; stoi=nie; malo_miejsca=nie; wiek=-1; dysk=-1
           for proba in 1 2 3; do
-            kod=$(curl -s -o odp.json -w '%{http_code}' --max-time 20 "$ADRES" || echo 000)
+            kod=$(curl -s -o odp.json -w '%{http_code}' --max-time 20 "$ADRES" || true)
+            [ -z "$kod" ] && kod=000
             # 503 znaczy „Signal odłączony", ale sam radar odpowiada: to nie awaria serwera
             if [ "$kod" = "200" ] || [ "$kod" = "503" ]; then
               if grep -q '"wersja"' odp.json; then zyje=1; break; fi
@@ -43,15 +44,24 @@ jobs:
             tresc=$(head -c 300 odp.json | tr -d '\n')
             if grep -q '"signal":true' odp.json; then signal=ok; else signal=padl; fi
             if grep -q '"dify":true' odp.json; then model=ok; else model=padl; fi
+            wiek=$(python3 -c "import json,sys; d=json.load(open('odp.json')); print(d.get('zbiorka_wiek_min') if d.get('zbiorka_wiek_min') is not None else -1)")
+            dysk=$(python3 -c "import json,sys; d=json.load(open('odp.json')); print(d.get('dysk_wolne_mb') if d.get('dysk_wolne_mb') is not None else -1)")
+            # zbiorka chodzi co 30 min: 120 min ciszy znaczy zamarly harmonogram
+            if [ "$wiek" -gt 120 ] 2>/dev/null; then stoi=tak; fi
+            if [ "$dysk" -ge 0 ] && [ "$dysk" -lt 400 ] 2>/dev/null; then malo_miejsca=tak; fi
           fi
           {
             echo "zyje=$zyje"
             echo "kod=$kod"
             echo "signal=$signal"
             echo "model=$model"
+            echo "stoi=$stoi"
+            echo "malo_miejsca=$malo_miejsca"
+            echo "wiek=$wiek"
+            echo "dysk=$dysk"
             echo "tresc=$tresc"
           } >> "$GITHUB_OUTPUT"
-          echo "radar=$zyje kod=$kod signal=$signal model=$model"
+          echo "radar=$zyje kod=$kod signal=$signal model=$model zbiorka_min=$wiek dysk_mb=$dysk"
 
       - name: Alarm albo odwołanie alarmu
         env:
@@ -59,6 +69,10 @@ jobs:
           KOD: ${{ steps.pytanie.outputs.kod }}
           SIGNAL: ${{ steps.pytanie.outputs.signal }}
           TRESC: ${{ steps.pytanie.outputs.tresc }}
+          STOI: ${{ steps.pytanie.outputs.stoi }}
+          MALO: ${{ steps.pytanie.outputs.malo_miejsca }}
+          WIEK: ${{ steps.pytanie.outputs.wiek }}
+          DYSK: ${{ steps.pytanie.outputs.dysk }}
         run: |
           teraz=$(TZ=Europe/Warsaw date '+%d.%m.%Y %H:%M')
           push () {  # $1 tytuł, $2 treść, $3 priorytet, $4 tag
@@ -101,6 +115,27 @@ jobs:
             gh issue comment "$nrs" --repo "$REPO" --body "✅ Signal znów podłączony ($teraz)."
             gh issue close "$nrs" --repo "$REPO"
             push "Signal znów podłączony" "Radar znów wysyła wiadomości." default white_check_mark
+          fi
+
+          # radar odpowiada, ale nic nie robi: zamarły harmonogram albo pełny dysk
+          nrp=$(otwarte radar-stoi)
+          stoi_teraz=nie
+          if [ "$ZYJE" = "1" ] && { [ "$STOI" = "tak" ] || [ "$MALO" = "tak" ]; }; then stoi_teraz=tak; fi
+          if [ "$stoi_teraz" = "tak" ] && [ -z "$nrp" ]; then
+            body=$(printf '%s\n' \
+              "@Asystent-AI Radar odpowiada na health, ale przestał pracować." \
+              "" \
+              "Ostatnia zbiórka źródeł: $WIEK minut temu (normalnie co 30 minut)." \
+              "Wolne miejsce na dysku: $DYSK MB." \
+              "" \
+              "Prawdopodobne przyczyny: zawieszony harmonogram w kontenerze albo pełny dysk serwera." \
+              "Sprawdzić: docker logs --tail 200 glos-radar oraz df -h na 204.168.196.86.")
+            gh issue create --repo "$REPO" --label radar-stoi --title "⚠️ Radar odpowiada, ale stoi ($teraz)" --body "$body"
+            push "Radar stoi" "Zbiórka źródeł milczy od $WIEK min, wolne $DYSK MB. Radar odpowiada, ale nie pracuje." high warning
+          elif [ "$stoi_teraz" = "nie" ] && [ "$ZYJE" = "1" ] && [ -n "$nrp" ]; then
+            gh issue comment "$nrp" --repo "$REPO" --body "✅ Radar znów pracuje ($teraz). Zbiórka: $WIEK min temu, wolne: $DYSK MB."
+            gh issue close "$nrp" --repo "$REPO"
+            push "Radar znów pracuje" "Zbiórka źródeł wróciła ($teraz)." default white_check_mark
           fi
 
       - name: Zgłoś niepowodzenie samego czujnika
