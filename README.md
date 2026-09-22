@@ -28,3 +28,23 @@ Subscribe to topic → nazwa tematu. Bez aplikacji zostaje e-mail z GitHuba.
 Repozytorium jest publiczne, bo GitHub Actions w publicznych repozytoriach nie
 zużywają minut z limitu. Nie ma tu żadnych sekretów poza tematem push, a adres
 `/radar/health` i tak jest jawny (zwraca tylko stan usług, bez treści).
+
+## Stan na 22.09.2026: harmonogram nie startuje
+
+Uruchamiany ręcznie (`Run workflow` albo `gh workflow run`) czujnik działa
+bezbłędnie: sprawdzono na żywo, że zatrzymany radar daje zgłoszenie i push,
+a podniesiony zamyka zgłoszenie i wysyła odwołanie. Natomiast **ani jedno
+uruchomienie z harmonogramu (`schedule`) dotąd nie ruszyło**, mimo że:
+
+- workflow leży na domyślnej gałęzi i jest `active`,
+- Actions są włączone, repozytorium publiczne i nowe,
+- adres e-mail konta jest zweryfikowany,
+- składnia crona była próbowana w trzech wariantach (`*/10`, lista minut, `*/5`),
+- plik przerejestrowano pod nową nazwą, a commit przypisano do konta
+  (wcześniejsze szły jako `web-flow`),
+- GitHub Status nie zgłaszał incydentu.
+
+Dopóki to się nie zmieni, jedyną działającą warstwą jest dozór na serwerze
+(`/opt/glos-radar/doglad.sh`), który obsługuje wszystko poza padnięciem całej
+maszyny. Domknięcie tej ostatniej luki wymaga zewnętrznej usługi monitorującej
+(np. darmowy UptimeRobot na `https://inoreader.fg.pl/radar/health`).
