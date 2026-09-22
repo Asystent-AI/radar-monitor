@@ -1,0 +1,32 @@
+name: Puls repozytorium
+
+# GitHub wyłącza zaplanowane zadania po 60 dniach ciszy w repozytorium, a to
+# repozytorium z natury nikt nie dotyka. Bez tego pulsu czujnik zamarłby po
+# dwóch miesiącach — i to po cichu, czyli najgorzej jak można.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"   # poniedziałek rano
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  puls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Odnotuj, że czujnik żyje
+        run: |
+          teraz=$(TZ=Europe/Warsaw date '+%d.%m.%Y %H:%M')
+          echo "Ostatni puls: $teraz (czas polski)." > PULS.md
+          echo "" >> PULS.md
+          echo "Plik istnieje po to, żeby repozytorium nie zamilkło na 60 dni." >> PULS.md
+          echo "GitHub wyłącza wtedy zadania z harmonogramu, a czujnik radaru przestałby patrzeć." >> PULS.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PULS.md
+          git diff --staged --quiet || git commit -m "puls: $teraz"
+          git push
