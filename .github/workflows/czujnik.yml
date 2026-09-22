@@ -46,10 +46,11 @@ jobs:
             tresc=$(head -c 300 odp.json | tr -d '\n')
             if grep -q '"signal":true' odp.json; then signal=ok; else signal=padl; fi
             if grep -q '"dify":true' odp.json; then model=ok; else model=padl; fi
-            wiek=$(python3 -c "import json,sys; d=json.load(open('odp.json')); print(d.get('zbiorka_wiek_min') if d.get('zbiorka_wiek_min') is not None else -1)")
-            dysk=$(python3 -c "import json,sys; d=json.load(open('odp.json')); print(d.get('dysk_wolne_mb') if d.get('dysk_wolne_mb') is not None else -1)")
-            # zbiorka chodzi co 30 min: 120 min ciszy znaczy zamarly harmonogram
-            if [ "$wiek" -gt 120 ] 2>/dev/null; then stoi=tak; fi
+            wiek=$(python3 -c "import json; d=json.load(open('odp.json')); print(d.get('zbiorka_wiek_min', -1) if d.get('zbiorka_wiek_min') is not None else -1)")
+            dysk=$(python3 -c "import json; d=json.load(open('odp.json')); print(d.get('dysk_wolne_mb', -1) if d.get('dysk_wolne_mb') is not None else -1)")
+            # Czy zbiorka naprawde stoi, liczy serwer: tylko on wie, jakie jest okno
+            # skanowania i co ile minut radar zbiera. Tutaj czytamy gotowy werdykt.
+            stoi=$(python3 -c "import json; d=json.load(open('odp.json')); print('tak' if d.get('zbiorka_stoi') else ('nie' if 'zbiorka_stoi' in d else 'nieznany'))")
             if [ "$dysk" -ge 0 ] && [ "$dysk" -lt 400 ] 2>/dev/null; then malo_miejsca=tak; fi
           fi
           {
@@ -134,7 +135,7 @@ jobs:
               "Sprawdzić: docker logs --tail 200 glos-radar oraz df -h na 204.168.196.86.")
             gh issue create --repo "$REPO" --label radar-stoi --title "⚠️ Radar odpowiada, ale stoi ($teraz)" --body "$body"
             push "Radar stoi" "Zbiórka źródeł milczy od $WIEK min, wolne $DYSK MB. Radar odpowiada, ale nie pracuje." high warning
-          elif [ "$stoi_teraz" = "nie" ] && [ "$ZYJE" = "1" ] && [ -n "$nrp" ]; then
+          elif [ "$stoi_teraz" = "nie" ] && [ "$STOI" = "nie" ] && [ "$ZYJE" = "1" ] && [ -n "$nrp" ]; then
             gh issue comment "$nrp" --repo "$REPO" --body "✅ Radar znów pracuje ($teraz). Zbiórka: $WIEK min temu, wolne: $DYSK MB."
             gh issue close "$nrp" --repo "$REPO"
             push "Radar znów pracuje" "Zbiórka źródeł wróciła ($teraz)." default white_check_mark
