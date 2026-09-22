@@ -6,6 +6,11 @@ zgłosić własnej śmierci — gdy padnie kontener albo cała maszyna, milkną 
 z nim wszystkie jego kanały alarmowe, a cisza wygląda dokładnie tak samo jak
 spokój.
 
+Na samym serwerze stoi dozór poza kontenerem (`/opt/glos-radar/doglad.sh`,
+cron co 5 minut): sprawdza radar od środka, sam go podnosi i pisze na Signal,
+gdy to nie pomaga. Nie zobaczy jednak sytuacji, w której padnie cała maszyna
+albo ruch nie dochodzi z zewnątrz (Traefik, certyfikat, sieć operatora).
+
 To repozytorium jest jedyną częścią systemu, która stoi poza tamtym serwerem.
 Co 10 minut pyta `https://inoreader.fg.pl/radar/health` (trzy podejścia, żeby
 chwilowa sieć nikogo nie budziła) i:
