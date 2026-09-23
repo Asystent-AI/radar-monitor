@@ -2,9 +2,19 @@ name: Czujnik radaru
 
 # Ostatnia linia obrony: wszystkie alarmy Głosu Czemiernik biegną przez serwer
 # w Hetznerze, więc padnięty kontener albo padnięta maszyna wyglądają dokładnie
-# tak samo jak spokój. Ten czujnik stoi poza tą maszyną i pyta radar co 10 minut.
+# tak samo jak spokój. Ten czujnik stoi poza tą maszyną i pyta radar z zewnątrz.
+#
+# Co go uruchamia (23.09.2026):
+# - push na gałąź `puls`: dozór na serwerze (/opt/glos-radar/doglad.sh) co 15 minut
+#   wypycha tam pusty commit kluczem wdrożeniowym. Zdarzeń push GitHub nie dławi,
+#   w przeciwieństwie do harmonogramu, który przy */5 szedł raz na 2–5 godzin;
+# - schedule: zapas na wypadek, gdy pulsu nie ma (padł serwer; tę samą sytuację
+#   po 40 minutach zgłasza też martwy człowiek w ntfy);
+# - workflow_dispatch: ręcznie.
 
 on:
+  push:
+    branches: [puls]
   schedule:
     # nie o pelnych dziesiatkach: GitHub opoznia harmonogramy w szczycie,
     # a szczyt to poczatek kazdej godziny
@@ -112,12 +122,11 @@ jobs:
               "@Asystent-AI Radar działa, ale zgłasza signal: false, czyli nie ma jak wysłać alertów ani digestu." \
               "" \
               "Podłączenie: panel $PANEL → Ustawienia → Signal → kod QR (w telefonie: Signal → Ustawienia → Urządzenia połączone).")
+            # push o Signalu wysyła już dozór na serwerze (po 20 minutach 503); tu tylko zgłoszenie i e-mail
             gh issue create --repo "$REPO" --label signal-down --title "⚠️ Signal radaru odłączony ($teraz)" --body "$body"
-            push "Signal radaru odłączony" "Radar działa, ale nie ma jak wysłać wiadomości. Zeskanuj kod QR w panelu." high warning
           elif [ "$ZYJE" = "1" ] && [ "$SIGNAL" = "ok" ] && [ -n "$nrs" ]; then
             gh issue comment "$nrs" --repo "$REPO" --body "✅ Signal znów podłączony ($teraz)."
             gh issue close "$nrs" --repo "$REPO"
-            push "Signal znów podłączony" "Radar znów wysyła wiadomości." default white_check_mark
           fi
 
           # radar odpowiada, ale nic nie robi: zamarły harmonogram albo pełny dysk

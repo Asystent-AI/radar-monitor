@@ -29,24 +29,21 @@ Repozytorium jest publiczne, bo GitHub Actions w publicznych repozytoriach nie
 zużywają minut z limitu. Nie ma tu żadnych sekretów poza tematem push, a adres
 `/radar/health` i tak jest jawny (zwraca tylko stan usług, bez treści).
 
-## Stan na 22.09.2026: harmonogram nie startuje
+## Co uruchamia czujnik (od 23.09.2026)
 
-Uruchamiany ręcznie (`Run workflow` albo `gh workflow run`) czujnik działa
-bezbłędnie: sprawdzono na żywo, że zatrzymany radar daje zgłoszenie i push,
-a podniesiony zamyka zgłoszenie i wysyła odwołanie. Natomiast **ani jedno
-uruchomienie z harmonogramu (`schedule`) dotąd nie ruszyło**, mimo że:
+Harmonogram (`schedule`) ruszył dopiero wieczorem 22.09 i GitHub puszcza go
+co 2 do 5 godzin, choć cron mówi „co 5 minut”. To znane dławienie częstych
+harmonogramów na darmowych kontach, więc sam harmonogram nie nadaje się na
+szybki alarm.
 
-- workflow leży na domyślnej gałęzi i jest `active`,
-- Actions są włączone, repozytorium publiczne i nowe,
-- adres e-mail konta jest zweryfikowany,
-- składnia crona była próbowana w trzech wariantach (`*/10`, lista minut, `*/5`),
-- plik przerejestrowano pod nową nazwą, a commit przypisano do konta
-  (wcześniejsze szły jako `web-flow`),
-- GitHub Status nie zgłaszał incydentu.
+Dlatego głównym wyzwalaczem jest zdarzenie `push` na gałęzi `puls`. Dozór na
+serwerze (`/opt/glos-radar/doglad.sh`) co 15 minut robi z `main` gałąź `puls`
+z jednym pustym commitem i wypycha ją siłą kluczem wdrożeniowym tylko do tego
+repozytorium (`/root/.ssh/radar-monitor`, klucz „doglad-radaru” w Settings →
+Deploy keys). Zdarzeń push GitHub nie dławi, więc czujnik patrzy na radar
+z zewnątrz co 15 minut. Historia `main` się nie zmienia.
 
-Dopóki to się nie zmieni, pracę wykonuje dozór na serwerze
-(`/opt/glos-radar/doglad.sh`), łącznie z padnięciem całej maszyny: przy każdym
-przebiegu planuje w ntfy alarm z opóźnieniem 25 minut i kasuje poprzedni, więc
-gdy nie ma kto kasować, alarm sam dochodzi na telefon (martwy człowiek).
-Zewnętrzna usługa monitorująca nie jest do tego potrzebna. To repozytorium
-zostaje jako rezerwa i jako druga para oczu, gdyby harmonogram kiedyś ruszył.
+Gdy puls ustaje (padł serwer albo sieć), czujnik dalej ruszy z harmonogramu,
+a niezależnie od niego po 40 minutach dochodzi alarm martwego człowieka
+z ntfy. Push o odłączonym Signalu wysyła dozór na serwerze, więc czujnik
+zakłada w tej sprawie tylko zgłoszenie (e-mail z GitHuba), bez drugiego pusha.
