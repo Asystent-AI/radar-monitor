@@ -1,0 +1,251 @@
+name: Uptime domen i TLS
+
+# Zewnętrzny, nieinwazyjny monitoring dostępności HTTP i ważności certyfikatów TLS
+# dla wszystkich produkcyjnych domen (0 MB RAM na serwerze, brak SPOF).
+#
+# Wyzwalacze:
+# - push na gałąź `puls`: spójny z mechanizmem pulsu z serwera (co 15 min, bez dławienia schedule),
+# - schedule: niezależny zapas co ~15 min (działa nawet gdy serwer przestanie wysyłać puls),
+# - workflow_dispatch: ręczne uruchomienie diagnostyczne.
+
+on:
+  push:
+    branches: [puls]
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: uptime-domen
+  cancel-in-progress: false
+
+jobs:
+  sprawdz-domeny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      TLS_WARN_DAYS: "14"
+    steps:
+      - name: Sprawdź dostępność HTTP i certyfikaty TLS wszystkich domen
+        id: probe
+        shell: python3 {0}
+        run: |
+          import datetime as dt
+          import json
+          import os
+          import socket
+          import ssl
+          import subprocess
+          import time
+          from pathlib import Path
+
+          UA = (
+              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          )
+
+          TARGETS = [
+              {"host": "sklep.szopmania.pl", "url": "https://sklep.szopmania.pl/"},
+              {"host": "mail.szopmania.pl", "url": "https://mail.szopmania.pl/"},
+              {"host": "panel.fg.pl", "url": "https://panel.fg.pl/"},
+              {"host": "asystent.fg.pl", "url": "https://asystent.fg.pl/"},
+              {"host": "strategos.fg.pl", "url": "https://strategos.fg.pl/"},
+              {"host": "backup.fg.pl", "url": "https://backup.fg.pl/healthz"},
+              {"host": "dify.fg.pl", "url": "https://dify.fg.pl/console/api/ping"},
+              {"host": "metryki.fg.pl", "url": "https://metryki.fg.pl/"},
+              {"host": "ospczemierniki.pl", "url": "https://ospczemierniki.pl/"},
+              {"host": "kgw.czemierniki.org", "url": "https://kgw.czemierniki.org/"},
+              {"host": "pasjonaci.czemierniki.org", "url": "https://pasjonaci.czemierniki.org/"},
+          ]
+
+          tls_warn_days = int(os.environ.get("TLS_WARN_DAYS", "14"))
+
+          def check_http(url: str) -> tuple[bool, str, float]:
+              last_err = ""
+              for attempt in range(3):
+                  t0 = time.monotonic()
+                  proc = subprocess.run(
+                      [
+                          "curl", "-sS", "-L", "--max-redirs", "5",
+                          "--connect-timeout", "10", "--max-time", "20",
+                          "-A", UA,
+                          "-o", "/dev/null",
+                          "-w", "%{http_code}|%{ssl_verify_result}",
+                          url,
+                      ],
+                      capture_output=True,
+                      text=True,
+                  )
+                  elapsed = round(time.monotonic() - t0, 2)
+                  if proc.returncode == 0:
+                      parts = (proc.stdout or "").strip().split("|")
+                      code = int(parts[0]) if parts and parts[0].isdigit() else 0
+                      ssl_ok = len(parts) > 1 and parts[1] == "0"
+                      if 200 <= code < 400 and ssl_ok:
+                          return True, f"HTTP {code}", elapsed
+                      last_err = f"HTTP {code}, ssl_verify={parts[1] if len(parts) > 1 else '?'}"
+                  else:
+                      last_err = (proc.stderr or f"curl exit {proc.returncode}").strip().splitlines()[-1]
+                  if attempt < 2:
+                      time.sleep(5)
+              return False, last_err, elapsed
+
+          def check_tls_days(host: str) -> tuple[int | None, str]:
+              ctx = ssl.create_default_context()
+              for attempt in range(2):
+                  try:
+                      with socket.create_connection((host, 443), timeout=10) as sock:
+                          with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                              cert = ssock.getpeercert()
+                      not_after = cert.get("notAfter", "")
+                      exp = dt.datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=dt.timezone.utc)
+                      days = int((exp - dt.datetime.now(dt.timezone.utc)).total_seconds() // 86400)
+                      return days, exp.strftime("%Y-%m-%d")
+                  except Exception as exc:
+                      if attempt == 0:
+                          time.sleep(3)
+                      else:
+                          return None, f"TLS error: {exc}"
+              return None, "TLS unknown"
+
+          results = []
+          http_failures = []
+          tls_warnings = []
+
+          for item in TARGETS:
+              host = item["host"]
+              url = item["url"]
+              ok, detail, elapsed = check_http(url)
+              days, exp_str = check_tls_days(host)
+              row = {
+                  "host": host,
+                  "url": url,
+                  "ok": ok,
+                  "detail": detail,
+                  "elapsed_s": elapsed,
+                  "tls_days": days,
+                  "tls_exp": exp_str,
+              }
+              results.append(row)
+              status_tag = "OK" if ok else "FAIL"
+              tls_txt = f"{days}d ({exp_str})" if days is not None else exp_str
+              print(f"[{status_tag}] {host:28s} {detail:12s} {elapsed:5.2f}s  TLS: {tls_txt}")
+              if not ok:
+                  http_failures.append(row)
+              elif days is None or days < tls_warn_days:
+                  tls_warnings.append(row)
+
+          report = {
+              "checked_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+              "total": len(results),
+              "http_failures": http_failures,
+              "tls_warnings": tls_warnings,
+              "results": results,
+          }
+          Path("/tmp/uptime-report.json").write_text(
+              json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+          )
+
+          summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_file:
+              lines = [
+                  "### Zewnętrzny monitoring HTTP/TLS",
+                  "",
+                  "| Domena | Status | Czas | Certyfikat TLS |",
+                  "| :--- | :--- | ---: | :--- |",
+              ]
+              for r in results:
+                  icon = "✅" if r["ok"] else "🔴"
+                  tls_col = f"{r['tls_days']} dni ({r['tls_exp']})" if r["tls_days"] is not None else f"⚠️ {r['tls_exp']}"
+                  lines.append(f"| `{r['host']}` | {icon} {r['detail']} | {r['elapsed_s']} s | {tls_col} |")
+              Path(summary_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+          out_file = os.environ.get("GITHUB_OUTPUT")
+          if out_file:
+              with open(out_file, "a", encoding="utf-8") as fh:
+                  fh.write(f"http_fail_count={len(http_failures)}\n")
+                  fh.write(f"tls_warn_count={len(tls_warnings)}\n")
+
+      - name: Zarządzaj zgłoszeniami i powiadomieniami
+        run: |
+          set -euo pipefail
+          teraz=$(TZ=Europe/Warsaw date '+%d.%m.%Y %H:%M')
+
+          otwarte() {
+            gh issue list --repo "$REPO" --label "$1" --state open --json number --jq '.[0].number // empty'
+          }
+
+          ensure_label() {
+            gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force >/dev/null 2>&1 || true
+          }
+
+          push() {
+            if [ -z "${NTFY_TOPIC:-}" ]; then return 0; fi
+            curl -s --max-time 15 -H "Title: $1" -H "Priority: $3" -H "Tags: $4" \
+              -d "$2" "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true
+          }
+
+          ensure_label "uptime-down" "D93F0B" "Niedostępność produkcyjnej domeny HTTP/HTTPS"
+          ensure_label "tls-expiring" "FBCA04" "Certyfikat TLS wygasa w ciągu 14 dni"
+
+          HTTP_FAILS="${{ steps.probe.outputs.http_fail_count }}"
+          TLS_WARNS="${{ steps.probe.outputs.tls_warn_count }}"
+
+          nr_up=$(otwarte uptime-down)
+          if [ "$HTTP_FAILS" -gt 0 ]; then
+            lista=$(python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/uptime-report.json", encoding="utf-8"))
+          for x in r["http_failures"]:
+              print("- `{host}` ({url}): {detail}".format(**x))
+          PY
+          )
+            skrot=$(python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/uptime-report.json", encoding="utf-8"))
+          print(", ".join(x["host"] for x in r["http_failures"]))
+          PY
+          )
+            if [ -z "$nr_up" ]; then
+              body=$(printf '@Asystent-AI Zewnętrzny monitoring HTTP/TLS wykrył niedostępność (%s):\n\n%s\n\nZgłoszenie zamknie się automatycznie, gdy wszystkie domeny wrócą do normy.\n' "$teraz" "$lista")
+              gh issue create --repo "$REPO" --label uptime-down --title "🚨 Niedostępność domen: $skrot ($teraz)" --body "$body"
+              push "AWARIA DOMEN ($HTTP_FAILS)" "Niedostępne ($teraz): $skrot" urgent rotating_light
+            fi
+          elif [ -n "$nr_up" ]; then
+            gh issue comment "$nr_up" --repo "$REPO" --body "✅ Wszystkie monitorowane domeny znów odpowiadają poprawnie ($teraz)."
+            gh issue close "$nr_up" --repo "$REPO"
+            push "Domeny wróciły" "Wszystkie monitorowane domeny znów odpowiadają ($teraz)." default white_check_mark
+          fi
+
+          nr_tls=$(otwarte tls-expiring)
+          if [ "$TLS_WARNS" -gt 0 ]; then
+            lista_tls=$(python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/uptime-report.json", encoding="utf-8"))
+          for x in r["tls_warnings"]:
+              print("- `{host}`: {tls_days} dni (wygasa: {tls_exp})".format(**x))
+          PY
+          )
+            if [ -z "$nr_tls" ]; then
+              body=$(printf '@Asystent-AI Certyfikaty TLS wymagają uwagi (poniżej %s dni ważności, %s):\n\n%s\n' "$TLS_WARN_DAYS" "$teraz" "$lista_tls")
+              gh issue create --repo "$REPO" --label tls-expiring --title "⚠️ Certyfikat TLS bliski wygaśnięcia ($teraz)" --body "$body"
+              push "Certyfikat TLS wygasa" "Co najmniej jeden certyfikat TLS ma mniej niż $TLS_WARN_DAYS dni ($teraz)." high warning
+            fi
+          elif [ -n "$nr_tls" ]; then
+            gh issue comment "$nr_tls" --repo "$REPO" --body "✅ Wszystkie certyfikaty TLS są ważne powyżej ${TLS_WARN_DAYS} dni ($teraz)."
+            gh issue close "$nr_tls" --repo "$REPO"
+          fi
+
+      - name: Zgłoś niepowodzenie zadania monitoringu domen
+        if: failure()
+        run: |
+          if [ -z "${NTFY_TOPIC:-}" ]; then exit 0; fi
+          curl -s --max-time 15 -H "Title: Monitor domen się wywrócił" -H "Priority: high" -H "Tags: warning" \
+            -d "Zadanie GitHuba (Uptime domen i TLS) zakończyło się błędem: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true

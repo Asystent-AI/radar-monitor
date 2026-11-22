@@ -47,3 +47,16 @@ Gdy puls ustaje (padł serwer albo sieć), czujnik dalej ruszy z harmonogramu,
 a niezależnie od niego po 40 minutach dochodzi alarm martwego człowieka
 z ntfy. Push o odłączonym Signalu wysyła dozór na serwerze, więc czujnik
 zakłada w tej sprawie tylko zgłoszenie (e-mail z GitHuba), bez drugiego pusha.
+
+## Zewnętrzny monitoring HTTP i TLS domen (`uptime-domen.yml`)
+
+Dodatkowy niezależny workflow `.github/workflows/uptime-domen.yml` (0 MB RAM na
+serwerze, brak SPOF) sprawdza dostępność HTTPS oraz ważność certyfikatów TLS
+(próg ostrzegawczy: 14 dni) dla wszystkich kluczowych domen:
+`sklep.szopmania.pl`, `mail.szopmania.pl`, `panel.fg.pl`, `asystent.fg.pl`,
+`strategos.fg.pl`, `backup.fg.pl`, `dify.fg.pl`, `metryki.fg.pl`,
+`ospczemierniki.pl`, `kgw.czemierniki.org`, `pasjonaci.czemierniki.org`.
+
+Przy awarii zakłada zbiorcze zgłoszenie z etykietą `uptime-down` (lub
+`tls-expiring`) i wysyła powiadomienie przez `ntfy`, a po powrocie do normy
+automatycznie je zamyka.
