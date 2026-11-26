@@ -54,7 +54,6 @@ jobs:
               {"host": "sklep.szopmania.pl", "url": "https://sklep.szopmania.pl/"},
               {"host": "mail.szopmania.pl", "url": "https://mail.szopmania.pl/"},
               {"host": "panel.fg.pl", "url": "https://panel.fg.pl/"},
-              {"host": "asystent.fg.pl", "url": "https://asystent.fg.pl/"},
               {"host": "strategos.fg.pl", "url": "https://strategos.fg.pl/"},
               {"host": "backup.fg.pl", "url": "https://backup.fg.pl/healthz"},
               {"host": "dify.fg.pl", "url": "https://dify.fg.pl/console/api/ping"},

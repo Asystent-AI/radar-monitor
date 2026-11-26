@@ -53,7 +53,7 @@ zakłada w tej sprawie tylko zgłoszenie (e-mail z GitHuba), bez drugiego pusha.
 Dodatkowy niezależny workflow `.github/workflows/uptime-domen.yml` (0 MB RAM na
 serwerze, brak SPOF) sprawdza dostępność HTTPS oraz ważność certyfikatów TLS
 (próg ostrzegawczy: 14 dni) dla wszystkich kluczowych domen:
-`sklep.szopmania.pl`, `mail.szopmania.pl`, `panel.fg.pl`, `asystent.fg.pl`,
+`sklep.szopmania.pl`, `mail.szopmania.pl`, `panel.fg.pl`,
 `strategos.fg.pl`, `backup.fg.pl`, `dify.fg.pl`, `metryki.fg.pl`,
 `ospczemierniki.pl`, `kgw.czemierniki.org`, `pasjonaci.czemierniki.org`.
 
