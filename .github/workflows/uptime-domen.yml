@@ -4,13 +4,10 @@ name: Uptime domen i TLS
 # dla wszystkich produkcyjnych domen (0 MB RAM na serwerze, brak SPOF).
 #
 # Wyzwalacze:
-# - push na gałąź `puls`: spójny z mechanizmem pulsu z serwera (co 15 min, bez dławienia schedule),
 # - schedule: niezależny zapas co ~15 min (działa nawet gdy serwer przestanie wysyłać puls),
 # - workflow_dispatch: ręczne uruchomienie diagnostyczne.
 
 on:
-  push:
-    branches: [puls]
   schedule:
     - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
